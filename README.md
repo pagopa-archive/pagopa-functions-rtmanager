@@ -1,0 +1,1 @@
+# pagopa-functions-rtmanager
