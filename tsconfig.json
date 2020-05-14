@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es6",
+    "outDir": "dist",
+    "rootDir": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "noImplicitAny": true,
+    "declaration": false,
+    "sourceMap": false,
+    "lib": ["dom"]
+  },
+  "exclude": [
+    "__mocks__",
+    "dist",
+    "node_modules",
+    "src/**/__tests__/*",
+    "docker/**/*"
+  ]
+}

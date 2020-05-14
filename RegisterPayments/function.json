@@ -1,0 +1,27 @@
+{
+  "bindings": [
+    {
+      "authLevel": "function",
+      "type": "httpTrigger",
+      "direction": "in",
+      "name": "req",
+      "route": "register-payments",
+      "methods": [
+        "post"
+      ]
+    },
+    {
+      "type": "http",
+      "direction": "out",
+      "name": "res"
+    },
+    {
+      "type": "blob",
+      "name": "rtDocument",
+      "path": "rt/{iuv}.xml",
+      "connection": "RTStorageConnection",
+      "direction": "out"
+    }
+  ],
+  "scriptFile": "../dist/RegisterPayments/index.js"
+}
