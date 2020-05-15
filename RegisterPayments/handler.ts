@@ -1,8 +1,9 @@
 import { Context } from "@azure/functions";
 import * as express from "express";
 import { Response } from "express";
-import { Either, fromOption, right } from "fp-ts/lib/Either";
-import { fromNullable, some } from "fp-ts/lib/Option";
+import { sequenceS } from "fp-ts/lib/Apply";
+import { Either, either, fromOption, right } from "fp-ts/lib/Either";
+import { fromNullable } from "fp-ts/lib/Option";
 import { ContextMiddleware } from "io-functions-commons/dist/src/utils/middlewares/context_middleware";
 import { RequiredBodyPayloadMiddleware } from "io-functions-commons/dist/src/utils/middlewares/required_body_payload";
 import {
@@ -302,25 +303,17 @@ export function RegisterPaymentHandler(
         decodedRTXML,
         "text/xml"
       );
-      return await parseDatiPagamento(xmlDocument)
-        .chain(_ =>
-          parseSoggettoPagatore(xmlDocument).map(_1 => ({
-            ..._,
-            ..._1
-          }))
-        )
-        .chain(_ =>
-          parseIndirizzoBeneficiario(xmlDocument).map(_1 => ({
-            ..._,
-            ..._1
-          }))
-        )
+      return await sequenceS(either)({
+        datiPagamento: parseDatiPagamento(xmlDocument),
+        indirizzoBeneficiario: parseIndirizzoBeneficiario(xmlDocument),
+        soggettoPagatore: parseSoggettoPagatore(xmlDocument)
+      })
         .map<
           Promise<IResponseSuccessJson<SuccessResponse> | IResponsePaymentError>
         >(async _ => {
           // TODO: Handle exceptions for saveRTToBlobStorage
           const blobUpdateRespone = await blobStorageService.save(
-            `${_.dataEsitoSingoloPagamento}-${_.identificativoUnivocoVersamento}.xml`,
+            `${_.datiPagamento.dataEsitoSingoloPagamento}-${_.datiPagamento.identificativoUnivocoVersamento}.xml`,
             decodedRTXML
           );
           context.log.info(
