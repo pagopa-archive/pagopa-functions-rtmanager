@@ -2,7 +2,7 @@
   "name": "pagopa-functions-rtmanager",
   "description": "",
   "author": "IO team",
-  "repository": "https://github.com/pagoPA/pagopa-functions-rtmanage",
+  "repository": "https://github.com/pagoPA/pagopa-functions-rtmanager",
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
