@@ -92,7 +92,7 @@ function parseDatiPagamento(
     commissioniApplicatePSP: string;
   }
 > {
-  return fromOption(new Error("Missing datiPagamento"))(
+  return fromOption(new Error("Missing field 'datiPagamento'"))(
     fromNullable(
       xmlDocument.getElementsByTagNameNS(RT_NAMESPACE, "datiPagamento").item(0)
     )
@@ -116,7 +116,7 @@ function parseDatiPagamento(
       )
     )
     .chain(_ =>
-      fromOption(new Error("Missing datiSingoloPagamento"))(
+      fromOption(new Error("Missing field 'datiSingoloPagamento'"))(
         fromNullable(
           _.elements.datiPagamento
             .getElementsByTagNameNS(RT_NAMESPACE, "datiSingoloPagamento")
@@ -215,7 +215,7 @@ function parseDatiPagamento(
 function parseIndirizzoBeneficiario(
   xmlDocument: Document
 ): Either<Error, { indirizzoBeneficiario: string }> {
-  return fromOption(new Error("Missing indirizzoBeneficiario"))(
+  return fromOption(new Error("Missing field 'indirizzoBeneficiario'"))(
     fromNullable(
       xmlDocument
         .getElementsByTagNameNS(RT_NAMESPACE, "indirizzoBeneficiario")
