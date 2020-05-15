@@ -1,7 +1,7 @@
 import { Context } from "@azure/functions";
 import * as express from "express";
 import { Response } from "express";
-import { fromOption } from "fp-ts/lib/Either";
+import { Either, fromOption, right } from "fp-ts/lib/Either";
 import { fromNullable, some } from "fp-ts/lib/Option";
 import { ContextMiddleware } from "io-functions-commons/dist/src/utils/middlewares/context_middleware";
 import { RequiredBodyPayloadMiddleware } from "io-functions-commons/dist/src/utils/middlewares/required_body_payload";
@@ -22,6 +22,7 @@ import {
   ResultEnum as SuccessResultEnum,
   SuccessResponse
 } from "../generated/definitions/SuccessResponse";
+import { IBlobStorageService } from "../utils/blobStorage";
 import {
   BasicAuthMiddleware,
   IAzureBasicAuth,
@@ -58,245 +59,283 @@ function getElementTextContent(e: Element): string | undefined {
   return e.textContent?.trim();
 }
 
-// tslint:disable-next-line: no-big-function
-export function RegisterPaymentHandler(): IRegisterPaymentHandler {
-  // tslint:disable-next-line: no-big-function
+const RT_NAMESPACE = "http://www.digitpa.gov.it/schemas/2011/Pagamenti/";
+
+function getFieldFromElement(
+  element: Element,
+  fieldName: string
+): Either<Error, string> {
+  return fromOption(new Error(`Missing field '${fieldName}'`))(
+    fromNullable(
+      element.getElementsByTagNameNS(RT_NAMESPACE, fieldName).item(0)
+    )
+      .orElse(() =>
+        // Negative RT haven't namespace on elements
+        fromNullable(element.getElementsByTagName(fieldName).item(0))
+      )
+      .mapNullable(getElementTextContent)
+  );
+}
+
+function parseDatiPagamento(
+  xmlDocument: Document
+): Either<
+  Error,
+  {
+    identificativoUnivocoVersamento: string;
+    importoTotalePagato: string;
+    singoloImportoPagato: string;
+    dataEsitoSingoloPagamento: string;
+    identificativoUnivocoRiscossione: string;
+    causaleVersamento: string;
+    datiSpecificiRiscossione: string;
+    commissioniApplicatePSP: string;
+  }
+> {
+  return fromOption(new Error("Missing datiPagamento"))(
+    fromNullable(
+      xmlDocument.getElementsByTagNameNS(RT_NAMESPACE, "datiPagamento").item(0)
+    )
+  )
+    .chain(datiPagamento =>
+      getFieldFromElement(datiPagamento, "identificativoUnivocoVersamento").map(
+        _ => ({
+          data: { identificativoUnivocoVersamento: _ },
+          elements: {
+            datiPagamento
+          }
+        })
+      )
+    )
+    .chain(_ =>
+      getFieldFromElement(_.elements.datiPagamento, "importoTotalePagato").map(
+        importoTotalePagato => ({
+          ..._,
+          data: { ..._.data, importoTotalePagato }
+        })
+      )
+    )
+    .chain(_ =>
+      fromOption(new Error("Missing datiSingoloPagamento"))(
+        fromNullable(
+          _.elements.datiPagamento
+            .getElementsByTagNameNS(RT_NAMESPACE, "datiSingoloPagamento")
+            .item(0)
+        ).chain(datiSingoloPagamento =>
+          fromNullable(
+            datiSingoloPagamento
+              .getElementsByTagNameNS(RT_NAMESPACE, "singoloImportoPagato")
+              .item(0)
+          )
+            .mapNullable(getElementTextContent)
+            .map(singoloImportoPagato => ({
+              data: {
+                ..._.data,
+                singoloImportoPagato
+              },
+              elements: {
+                ..._.elements,
+                datiSingoloPagamento
+              }
+            }))
+        )
+      )
+        .chain(_1 =>
+          getFieldFromElement(
+            _1.elements.datiSingoloPagamento,
+            "dataEsitoSingoloPagamento"
+          ).map(dataEsitoSingoloPagamento => ({
+            data: {
+              ..._1.data,
+              dataEsitoSingoloPagamento
+            },
+            elements: _1.elements
+          }))
+        )
+        .chain(_1 =>
+          getFieldFromElement(
+            _1.elements.datiSingoloPagamento,
+            "identificativoUnivocoRiscossione"
+          ).map(identificativoUnivocoRiscossione => ({
+            data: {
+              ..._1.data,
+              identificativoUnivocoRiscossione
+            },
+            elements: _1.elements
+          }))
+        )
+        .chain(_1 =>
+          getFieldFromElement(
+            _1.elements.datiSingoloPagamento,
+            "causaleVersamento"
+          ).map(causaleVersamento => ({
+            data: { ..._1.data, causaleVersamento },
+            elements: _1.elements
+          }))
+        )
+        .chain(_1 =>
+          getFieldFromElement(
+            _1.elements.datiSingoloPagamento,
+            "datiSpecificiRiscossione"
+          ).map(datiSpecificiRiscossione => ({
+            data: {
+              ..._1.data,
+              datiSpecificiRiscossione
+            },
+            elements: _1.elements
+          }))
+        )
+        .chain(_1 =>
+          getFieldFromElement(
+            _1.elements.datiSingoloPagamento,
+            "commissioniApplicatePSP"
+          ).fold(
+            () =>
+              right({
+                data: {
+                  ..._1.data,
+                  commissioniApplicatePSP: "0.00"
+                },
+                elements: _1.elements
+              }),
+            commissioniApplicatePSP =>
+              right({
+                data: {
+                  ..._1.data,
+                  commissioniApplicatePSP
+                },
+                elements: _1.elements
+              })
+          )
+        )
+    )
+    .map(_ => _.data);
+}
+
+function parseIndirizzoBeneficiario(
+  xmlDocument: Document
+): Either<Error, { indirizzoBeneficiario: string }> {
+  return fromOption(new Error("Missing indirizzoBeneficiario"))(
+    fromNullable(
+      xmlDocument
+        .getElementsByTagNameNS(RT_NAMESPACE, "indirizzoBeneficiario")
+        .item(0)
+    )
+      .mapNullable(getElementTextContent)
+      .map(indirizzoBeneficiario => ({ indirizzoBeneficiario }))
+  );
+}
+
+function parseSoggettoPagatore(
+  xmlDocument: Document
+): Either<
+  Error,
+  {
+    emailPagatore: string;
+    anagraficaPagatore: string;
+    codiceIdentificativoUnivoco: string;
+  }
+> {
+  return fromOption(new Error("Invalid soggettoPagatore"))(
+    fromNullable(
+      xmlDocument
+        .getElementsByTagNameNS(RT_NAMESPACE, "soggettoPagatore")
+        .item(0)
+    ).chain(soggettoPagatore =>
+      fromNullable(
+        soggettoPagatore
+          .getElementsByTagNameNS(RT_NAMESPACE, "anagraficaPagatore")
+          .item(0)
+      )
+        .mapNullable(getElementTextContent)
+        .map(anagraficaPagatore => ({
+          data: { anagraficaPagatore },
+          elements: { soggettoPagatore }
+        }))
+        .chain(_1 =>
+          fromNullable(
+            _1.elements.soggettoPagatore
+              .getElementsByTagNameNS(
+                RT_NAMESPACE,
+                "codiceIdentificativoUnivoco"
+              )
+              .item(0)
+          )
+            .mapNullable(getElementTextContent)
+            .map(codiceIdentificativoUnivoco => ({
+              data: {
+                ..._1.data,
+                codiceIdentificativoUnivoco
+              },
+              elements: _1.elements
+            }))
+        )
+        .chain(_1 =>
+          fromNullable(
+            _1.elements.soggettoPagatore
+              .getElementsByTagNameNS(RT_NAMESPACE, "e-mailPagatore")
+              .item(0)
+          )
+            .mapNullable(getElementTextContent)
+            .map(emailPagatore => ({
+              data: {
+                ..._1.data,
+                emailPagatore
+              },
+              elements: _1.elements
+            }))
+        )
+    )
+  ).map(_ => _.data);
+}
+
+export function RegisterPaymentHandler(
+  blobStorageService: IBlobStorageService
+): IRegisterPaymentHandler {
   return async (context, __, registerPaymentNotify) => {
-    context.log.verbose(`${JSON.stringify(registerPaymentNotify)}`);
     if (registerPaymentNotify.receiptXML) {
       const decodedRTXML = Buffer.from(
         registerPaymentNotify.receiptXML,
         "base64"
       ).toString("ascii");
-      context.log.info(`RT: ${decodedRTXML}`);
       const xmlDocument = new DOMParser().parseFromString(
         decodedRTXML,
         "text/xml"
       );
-      return fromOption(new Error("Missing datiPagamento"))(
-        fromNullable(xmlDocument.getElementsByTagName("datiPagamento").item(0))
-      )
-        .chain(datiPagamento =>
-          fromOption(new Error("Missing identificativoUnivocoVersamento"))(
-            fromNullable(
-              datiPagamento
-                .getElementsByTagName("identificativoUnivocoVersamento")
-                .item(0)
-            )
-              .mapNullable(getElementTextContent)
-              .map(identificativoUnivocoVersamento => ({
-                data: { identificativoUnivocoVersamento },
-                elements: { datiPagamento }
-              }))
-          )
+      return await parseDatiPagamento(xmlDocument)
+        .chain(_ =>
+          parseSoggettoPagatore(xmlDocument).map(_1 => ({
+            ..._,
+            ..._1
+          }))
         )
         .chain(_ =>
-          fromOption(new Error("Missing importoTotalePagato"))(
-            fromNullable(
-              _.elements.datiPagamento
-                .getElementsByTagName("importoTotalePagato")
-                .item(0)
-            )
-              .mapNullable(getElementTextContent)
-              .map(importoTotalePagato => ({
-                ..._,
-                data: { ..._.data, importoTotalePagato }
-              }))
-          )
+          parseIndirizzoBeneficiario(xmlDocument).map(_1 => ({
+            ..._,
+            ..._1
+          }))
         )
-        .chain(_ =>
-          fromOption(new Error("Missing datiSingoloPagamento"))(
-            fromNullable(
-              _.elements.datiPagamento
-                .getElementsByTagName("datiSingoloPagamento")
-                .item(0)
-            ).chain(datiSingoloPagamento =>
-              fromNullable(
-                datiSingoloPagamento
-                  .getElementsByTagName("singoloImportoPagato")
-                  .item(0)
-              )
-                .mapNullable(getElementTextContent)
-                .map(singoloImportoPagato => ({
-                  data: {
-                    ..._.data,
-                    singoloImportoPagato
-                  },
-                  elements: {
-                    ..._.elements,
-                    datiSingoloPagamento
-                  }
-                }))
-            )
-          )
-            .chain(_1 =>
-              fromOption(new Error("Missing dataEsitoSingoloPagamento"))(
-                fromNullable(
-                  _1.elements.datiSingoloPagamento
-                    .getElementsByTagName("dataEsitoSingoloPagamento")
-                    .item(0)
-                )
-                  .mapNullable(getElementTextContent)
-                  .map(dataEsitoSingoloPagamento => ({
-                    data: {
-                      ..._1.data,
-                      dataEsitoSingoloPagamento
-                    },
-                    elements: _1.elements
-                  }))
-              )
-            )
-            .chain(_1 =>
-              fromOption(new Error("Missing identificativoUnivocoRiscossione"))(
-                fromNullable(
-                  _1.elements.datiSingoloPagamento
-                    .getElementsByTagName("identificativoUnivocoRiscossione")
-                    .item(0)
-                )
-                  .mapNullable(getElementTextContent)
-                  .map(identificativoUnivocoRiscossione => ({
-                    data: {
-                      ..._1.data,
-                      identificativoUnivocoRiscossione
-                    },
-                    elements: _1.elements
-                  }))
-              )
-            )
-            .chain(_1 =>
-              fromOption(new Error("Missing causaleVersamento"))(
-                fromNullable(
-                  _1.elements.datiSingoloPagamento
-                    .getElementsByTagName("causaleVersamento")
-                    .item(0)
-                )
-                  .mapNullable(getElementTextContent)
-                  .map(causaleVersamento => ({
-                    data: { ..._1.data, causaleVersamento },
-                    elements: _1.elements
-                  }))
-              )
-            )
-            .chain(_1 =>
-              fromOption(new Error("Missing datiSpecificiRiscossione"))(
-                fromNullable(
-                  _1.elements.datiSingoloPagamento
-                    .getElementsByTagName("datiSpecificiRiscossione")
-                    .item(0)
-                )
-                  .mapNullable(getElementTextContent)
-                  .map(datiSpecificiRiscossione => ({
-                    data: {
-                      ..._1.data,
-                      datiSpecificiRiscossione
-                    },
-                    elements: _1.elements
-                  }))
-              )
-            )
-            .chain(_1 =>
-              fromOption(new Error("Missing commissioniApplicatePSP"))(
-                fromNullable(
-                  _1.elements.datiSingoloPagamento
-                    .getElementsByTagName("commissioniApplicatePSP")
-                    .item(0)
-                )
-                  .mapNullable(getElementTextContent)
-                  .map(commissioniApplicatePSP => ({
-                    data: {
-                      ..._1.data,
-                      commissioniApplicatePSP
-                    },
-                    elements: _1.elements
-                  }))
-                  .orElse(() =>
-                    some({
-                      data: {
-                        ..._1.data,
-                        commissioniApplicatePSP: "0.00"
-                      },
-                      elements: _1.elements
-                    })
-                  )
-              )
-            )
-        )
-        .chain(_ =>
-          fromOption(new Error("Invalid soggettoPagatore"))(
-            fromNullable(
-              xmlDocument.getElementsByTagName("soggettoPagatore").item(0)
-            ).chain(soggettoPagatore =>
-              fromNullable(
-                soggettoPagatore
-                  .getElementsByTagName("anagraficaPagatore")
-                  .item(0)
-              )
-                .mapNullable(getElementTextContent)
-                .map(anagraficaPagatore => ({
-                  data: { anagraficaPagatore },
-                  elements: { soggettoPagatore }
-                }))
-                .chain(_1 =>
-                  fromNullable(
-                    _1.elements.soggettoPagatore
-                      .getElementsByTagName("codiceIdentificativoUnivoco")
-                      .item(0)
-                  )
-                    .mapNullable(getElementTextContent)
-                    .map(codiceIdentificativoUnivoco => ({
-                      data: {
-                        ..._1.data,
-                        codiceIdentificativoUnivoco
-                      },
-                      elements: _1.elements
-                    }))
-                )
-                .chain(_1 =>
-                  fromNullable(
-                    _1.elements.soggettoPagatore
-                      .getElementsByTagName("e-mailPagatore")
-                      .item(0)
-                  )
-                    .mapNullable(getElementTextContent)
-                    .map(emailPagatore => ({
-                      data: {
-                        ..._1.data,
-                        emailPagatore
-                      },
-                      elements: _1.elements
-                    }))
-                )
-                .map(_1 => ({ ..._1.data, ..._.data }))
-            )
-          )
-        )
-        .chain(_ =>
-          fromOption(new Error("Missing indirizzoBeneficiario"))(
-            fromNullable(
-              xmlDocument.getElementsByTagName("indirizzoBeneficiario").item(0)
-            )
-              .mapNullable(getElementTextContent)
-              .map(indirizzoBeneficiario => ({
-                ..._,
-                indirizzoBeneficiario
-              }))
-          )
-        )
-        .map<IResponseSuccessJson<SuccessResponse> | IResponsePaymentError>(
-          _ => {
-            // tslint:disable-next-line: no-object-mutation
-            context.bindings.rtDocument = decodedRTXML;
-            // tslint:disable-next-line: no-object-mutation
-            context.bindings.iuv = _.identificativoUnivocoVersamento;
-            return ResponseSuccessJson({ result: SuccessResultEnum.OK });
-          }
-        )
+        .map<
+          Promise<IResponseSuccessJson<SuccessResponse> | IResponsePaymentError>
+        >(async _ => {
+          // TODO: Handle exceptions for saveRTToBlobStorage
+          const blobUpdateRespone = await blobStorageService.save(
+            `${_.dataEsitoSingoloPagamento}-${_.identificativoUnivocoVersamento}.xml`,
+            decodedRTXML
+          );
+          context.log.info(
+            `RegisterPayment|INFO|Save RT into blob storage. requestId: ${blobUpdateRespone.requestId}`
+          );
+          return ResponseSuccessJson({ result: SuccessResultEnum.OK });
+        })
         .mapLeft(_ => {
-          context.log.error(`Invalid RT: ${_}`);
+          context.log.error(`RegisterPayment|ERROR|Invalid RT: ${_}`);
           return _;
         })
         .getOrElse(
-          ResponsePaymentError("Error on register payment", "Invalid RT")
+          Promise.resolve(
+            ResponsePaymentError("Error on register payment", "Invalid RT")
+          )
         );
     } else {
       return ResponsePaymentError(
@@ -308,9 +347,10 @@ export function RegisterPaymentHandler(): IRegisterPaymentHandler {
 }
 
 export function RegisterPayment(
-  basicAuthParams: IBasicAuthParams
+  basicAuthParams: IBasicAuthParams,
+  blobStorageService: IBlobStorageService
 ): express.RequestHandler {
-  const handler = RegisterPaymentHandler();
+  const handler = RegisterPaymentHandler(blobStorageService);
 
   const middlewaresWrap = withRequestMiddlewares(
     // Extract Azure Functions bindings

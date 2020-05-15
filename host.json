@@ -10,7 +10,7 @@
       "routePrefix": "rt-manager"
     },
     "durableTask": {
-      "hubName": "FunctionsTemplateHub"
+      "hubName": "RtManagerFunctionsHub"
     }
   },
   "extensionBundle": {
