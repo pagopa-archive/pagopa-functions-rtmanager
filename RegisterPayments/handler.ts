@@ -253,9 +253,9 @@ function parseSoggettoPagatore(
           data: { anagraficaPagatore },
           elements: { soggettoPagatore }
         }))
-        .chain(_1 =>
+        .chain(_ =>
           fromNullable(
-            _1.elements.soggettoPagatore
+            _.elements.soggettoPagatore
               .getElementsByTagNameNS(
                 RT_NAMESPACE,
                 "codiceIdentificativoUnivoco"
@@ -265,25 +265,25 @@ function parseSoggettoPagatore(
             .mapNullable(getElementTextContent)
             .map(codiceIdentificativoUnivoco => ({
               data: {
-                ..._1.data,
+                ..._.data,
                 codiceIdentificativoUnivoco
               },
-              elements: _1.elements
+              elements: _.elements
             }))
         )
-        .chain(_1 =>
+        .chain(_ =>
           fromNullable(
-            _1.elements.soggettoPagatore
+            _.elements.soggettoPagatore
               .getElementsByTagNameNS(RT_NAMESPACE, "e-mailPagatore")
               .item(0)
           )
             .mapNullable(getElementTextContent)
             .map(emailPagatore => ({
               data: {
-                ..._1.data,
+                ..._.data,
                 emailPagatore
               },
-              elements: _1.elements
+              elements: _.elements
             }))
         )
     )
