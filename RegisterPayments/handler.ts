@@ -62,6 +62,9 @@ function getElementTextContent(e: Element): string | undefined {
 
 const RT_NAMESPACE = "http://www.digitpa.gov.it/schemas/2011/Pagamenti/";
 
+/**
+ * Get the text content of an element nested inside a provided Element
+ */
 function getFieldFromElement(
   element: Element,
   fieldName: string
@@ -78,6 +81,9 @@ function getFieldFromElement(
   );
 }
 
+/**
+ * Parse datiPagamento fields values from an XML Document
+ */
 function parseDatiPagamento(
   xmlDocument: Document
 ): Either<
@@ -213,6 +219,9 @@ function parseDatiPagamento(
     .map(_ => _.data);
 }
 
+/**
+ * Parse indirizzoBeneficiario field value from an XML Document
+ */
 function parseIndirizzoBeneficiario(
   xmlDocument: Document
 ): Either<Error, { indirizzoBeneficiario: string }> {
@@ -227,6 +236,9 @@ function parseIndirizzoBeneficiario(
   );
 }
 
+/**
+ * Parse soggettoPagatore fields values from an XML Document
+ */
 function parseSoggettoPagatore(
   xmlDocument: Document
 ): Either<
