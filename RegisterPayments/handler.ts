@@ -3,7 +3,7 @@ import * as express from "express";
 import { Response } from "express";
 import { sequenceS } from "fp-ts/lib/Apply";
 import { Either, either, fromOption, right } from "fp-ts/lib/Either";
-import { fromNullable } from "fp-ts/lib/Option";
+import { fromNullable, Option } from "fp-ts/lib/Option";
 import { ContextMiddleware } from "io-functions-commons/dist/src/utils/middlewares/context_middleware";
 import { RequiredBodyPayloadMiddleware } from "io-functions-commons/dist/src/utils/middlewares/required_body_payload";
 import {
@@ -23,6 +23,11 @@ import {
   ResultEnum as SuccessResultEnum,
   SuccessResponse
 } from "../generated/definitions/SuccessResponse";
+import {
+  DatiPagamento,
+  IndirizzoBeneficiario,
+  SoggettoPagatore
+} from "../types/rtParser";
 import { IBlobStorageService } from "../utils/blobStorage";
 import {
   BasicAuthMiddleware,
@@ -56,28 +61,51 @@ type IRegisterPaymentHandler = (
   | IResponseErrorValidation
 >;
 
-function getElementTextContent(e: Element): string | undefined {
-  return e.textContent?.trim();
-}
-
 const RT_NAMESPACE = "http://www.digitpa.gov.it/schemas/2011/Pagamenti/";
 
 /**
- * Get the text content of an element nested inside a provided Element
+ * Get the text content of an element nested inside the provided Element.
+ * Return an Option<string>
  */
-function getFieldFromElement(
+function getElementTextContent(
+  element: Element,
+  fieldName: string
+): Option<string> {
+  return fromNullable(
+    element.getElementsByTagNameNS(RT_NAMESPACE, fieldName).item(0)
+  )
+    .orElse(() =>
+      // Negative RT haven't namespace on elements
+      fromNullable(element.getElementsByTagName(fieldName).item(0))
+    )
+    .mapNullable(e => e.textContent?.trim());
+}
+
+/**
+ * Get the text content of an element nested inside the provided Element.
+ * Returns an Either<Error, string>
+ */
+function getElementTextContentEither(
   element: Element,
   fieldName: string
 ): Either<Error, string> {
   return fromOption(new Error(`Missing field '${fieldName}'`))(
-    fromNullable(
-      element.getElementsByTagNameNS(RT_NAMESPACE, fieldName).item(0)
-    )
-      .orElse(() =>
-        // Negative RT haven't namespace on elements
-        fromNullable(element.getElementsByTagName(fieldName).item(0))
-      )
-      .mapNullable(getElementTextContent)
+    getElementTextContent(element, fieldName)
+  );
+}
+
+/**
+ * Get an Element inside a Document.
+ * Returns Option<Element>
+ */
+function getElementFromXmlDocument(
+  xmlDocument: Document,
+  elementName: string
+): Option<Element> {
+  return fromNullable(
+    xmlDocument.getElementsByTagNameNS(RT_NAMESPACE, elementName).item(0)
+  ).orElse(() =>
+    fromNullable(xmlDocument.getElementsByTagName(elementName).item(0))
   );
 }
 
@@ -86,41 +114,29 @@ function getFieldFromElement(
  */
 function parseDatiPagamento(
   xmlDocument: Document
-): Either<
-  Error,
-  {
-    identificativoUnivocoVersamento: string;
-    importoTotalePagato: string;
-    singoloImportoPagato: string;
-    dataEsitoSingoloPagamento: string;
-    identificativoUnivocoRiscossione: string;
-    causaleVersamento: string;
-    datiSpecificiRiscossione: string;
-    commissioniApplicatePSP: string;
-  }
-> {
+): Either<Error, DatiPagamento> {
   return fromOption(new Error("Missing field 'datiPagamento'"))(
-    fromNullable(
-      xmlDocument.getElementsByTagNameNS(RT_NAMESPACE, "datiPagamento").item(0)
-    )
+    getElementFromXmlDocument(xmlDocument, "datiPagamento")
   )
     .chain(datiPagamento =>
-      getFieldFromElement(datiPagamento, "identificativoUnivocoVersamento").map(
-        _ => ({
-          data: { identificativoUnivocoVersamento: _ },
-          elements: {
-            datiPagamento
-          }
-        })
-      )
+      getElementTextContentEither(
+        datiPagamento,
+        "identificativoUnivocoVersamento"
+      ).map(_ => ({
+        data: { identificativoUnivocoVersamento: _ },
+        elements: {
+          datiPagamento
+        }
+      }))
     )
     .chain(_ =>
-      getFieldFromElement(_.elements.datiPagamento, "importoTotalePagato").map(
-        importoTotalePagato => ({
-          ..._,
-          data: { ..._.data, importoTotalePagato }
-        })
-      )
+      getElementTextContentEither(
+        _.elements.datiPagamento,
+        "importoTotalePagato"
+      ).map(importoTotalePagato => ({
+        ..._,
+        data: { ..._.data, importoTotalePagato }
+      }))
     )
     .chain(_ =>
       fromOption(new Error("Missing field 'datiSingoloPagamento'"))(
@@ -128,14 +144,19 @@ function parseDatiPagamento(
           _.elements.datiPagamento
             .getElementsByTagNameNS(RT_NAMESPACE, "datiSingoloPagamento")
             .item(0)
-        ).chain(datiSingoloPagamento =>
-          fromNullable(
-            datiSingoloPagamento
-              .getElementsByTagNameNS(RT_NAMESPACE, "singoloImportoPagato")
-              .item(0)
+        )
+          .orElse(() =>
+            fromNullable(
+              _.elements.datiPagamento
+                .getElementsByTagName("datiSingoloPagamento")
+                .item(0)
+            )
           )
-            .mapNullable(getElementTextContent)
-            .map(singoloImportoPagato => ({
+          .chain(datiSingoloPagamento =>
+            getElementTextContent(
+              datiSingoloPagamento,
+              "singoloImportoPagato"
+            ).map(singoloImportoPagato => ({
               data: {
                 ..._.data,
                 singoloImportoPagato
@@ -145,10 +166,10 @@ function parseDatiPagamento(
                 datiSingoloPagamento
               }
             }))
-        )
+          )
       )
         .chain(_1 =>
-          getFieldFromElement(
+          getElementTextContentEither(
             _1.elements.datiSingoloPagamento,
             "dataEsitoSingoloPagamento"
           ).map(dataEsitoSingoloPagamento => ({
@@ -160,7 +181,7 @@ function parseDatiPagamento(
           }))
         )
         .chain(_1 =>
-          getFieldFromElement(
+          getElementTextContentEither(
             _1.elements.datiSingoloPagamento,
             "identificativoUnivocoRiscossione"
           ).map(identificativoUnivocoRiscossione => ({
@@ -172,7 +193,7 @@ function parseDatiPagamento(
           }))
         )
         .chain(_1 =>
-          getFieldFromElement(
+          getElementTextContentEither(
             _1.elements.datiSingoloPagamento,
             "causaleVersamento"
           ).map(causaleVersamento => ({
@@ -181,7 +202,7 @@ function parseDatiPagamento(
           }))
         )
         .chain(_1 =>
-          getFieldFromElement(
+          getElementTextContentEither(
             _1.elements.datiSingoloPagamento,
             "datiSpecificiRiscossione"
           ).map(datiSpecificiRiscossione => ({
@@ -193,7 +214,7 @@ function parseDatiPagamento(
           }))
         )
         .chain(_1 =>
-          getFieldFromElement(
+          getElementTextContentEither(
             _1.elements.datiSingoloPagamento,
             "commissioniApplicatePSP"
           ).fold(
@@ -215,8 +236,24 @@ function parseDatiPagamento(
               })
           )
         )
+        .chain(_1 =>
+          getElementTextContentEither(
+            _.elements.datiPagamento,
+            "codiceEsitoPagamento"
+          ).map(codiceEsitoPagamento => ({
+            data: {
+              ..._1.data,
+              codiceEsitoPagamento
+            },
+            elements: _1.elements
+          }))
+        )
     )
-    .map(_ => _.data);
+    .chain(_ =>
+      DatiPagamento.decode(_.data).mapLeft(
+        err => new Error(err.map(_1 => _1.message).join("/"))
+      )
+    );
 }
 
 /**
@@ -224,15 +261,16 @@ function parseDatiPagamento(
  */
 function parseIndirizzoBeneficiario(
   xmlDocument: Document
-): Either<Error, { indirizzoBeneficiario: string }> {
+): Either<Error, IndirizzoBeneficiario> {
   return fromOption(new Error("Missing field 'indirizzoBeneficiario'"))(
-    fromNullable(
-      xmlDocument
-        .getElementsByTagNameNS(RT_NAMESPACE, "indirizzoBeneficiario")
-        .item(0)
+    getElementFromXmlDocument(
+      xmlDocument,
+      "indirizzoBeneficiario"
+    ).mapNullable(e => e.textContent?.trim())
+  ).chain(indirizzoBeneficiario =>
+    IndirizzoBeneficiario.decode({ indirizzoBeneficiario }).mapLeft(
+      err => new Error(err.map(_ => _.message).join("/"))
     )
-      .mapNullable(getElementTextContent)
-      .map(indirizzoBeneficiario => ({ indirizzoBeneficiario }))
   );
 }
 
@@ -241,67 +279,50 @@ function parseIndirizzoBeneficiario(
  */
 function parseSoggettoPagatore(
   xmlDocument: Document
-): Either<
-  Error,
-  {
-    emailPagatore: string;
-    anagraficaPagatore: string;
-    codiceIdentificativoUnivoco: string;
-  }
-> {
+): Either<Error, SoggettoPagatore> {
   return fromOption(new Error("Invalid soggettoPagatore"))(
-    fromNullable(
-      xmlDocument
-        .getElementsByTagNameNS(RT_NAMESPACE, "soggettoPagatore")
-        .item(0)
-    ).chain(soggettoPagatore =>
-      fromNullable(
-        soggettoPagatore
-          .getElementsByTagNameNS(RT_NAMESPACE, "anagraficaPagatore")
-          .item(0)
-      )
-        .mapNullable(getElementTextContent)
-        .map(anagraficaPagatore => ({
-          data: { anagraficaPagatore },
-          elements: { soggettoPagatore }
-        }))
-        .chain(_ =>
-          fromNullable(
-            _.elements.soggettoPagatore
-              .getElementsByTagNameNS(
-                RT_NAMESPACE,
-                "codiceIdentificativoUnivoco"
-              )
-              .item(0)
-          )
-            .mapNullable(getElementTextContent)
-            .map(codiceIdentificativoUnivoco => ({
+    getElementFromXmlDocument(xmlDocument, "soggettoPagatore").chain(
+      soggettoPagatore =>
+        getElementTextContent(soggettoPagatore, "anagraficaPagatore")
+          .map(anagraficaPagatore => ({
+            data: { anagraficaPagatore },
+            elements: { soggettoPagatore }
+          }))
+          .chain(_ =>
+            getElementTextContent(
+              _.elements.soggettoPagatore,
+              "codiceIdentificativoUnivoco"
+            ).map(codiceIdentificativoUnivoco => ({
               data: {
                 ..._.data,
                 codiceIdentificativoUnivoco
               },
               elements: _.elements
             }))
-        )
-        .chain(_ =>
-          fromNullable(
-            _.elements.soggettoPagatore
-              .getElementsByTagNameNS(RT_NAMESPACE, "e-mailPagatore")
-              .item(0)
           )
-            .mapNullable(getElementTextContent)
-            .map(emailPagatore => ({
+          .chain(_ =>
+            getElementTextContent(
+              _.elements.soggettoPagatore,
+              "e-mailPagatore"
+            ).map(emailPagatore => ({
               data: {
                 ..._.data,
                 emailPagatore
               },
               elements: _.elements
             }))
-        )
+          )
     )
-  ).map(_ => _.data);
+  ).chain(_ =>
+    SoggettoPagatore.decode(_.data).mapLeft(
+      err => new Error(err.map(_1 => _1.message).join("/"))
+    )
+  );
 }
 
+/**
+ * Parse a base64 encoded RT and store it inside a Blob Storage
+ */
 export function RegisterPaymentHandler(
   blobStorageService: IBlobStorageService
 ): IRegisterPaymentHandler {

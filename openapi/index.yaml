@@ -4,17 +4,17 @@ info:
   title: PagoPA RT Manager
   contact:
     name: PagoPA spa
-    url: https://forum.italia.it/c/progetto-io
+    url: https://forum.italia.it/c/pagopa/
   x-logo:
-    url: https://io.italia.it/assets/img/io-logo-blue.svg
+    url: https://www.pagopa.gov.it/assets/images/pagopa-logo.png
   description: >
-    Documentation of the IO Function API here.
-host: api.cd.italia.it
+    PagoPA RT Manager API specs. Store RT sent from the partner and provide statistics about payments.
+host: api.cd.pagopa.gov.it
 basePath: "/rt-manager"
 schemes:
   - https
 paths:
-  "/register-payments":
+  "/payments":
     post:
       operationId: registerPayment
       summary: Register Payments
