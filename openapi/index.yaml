@@ -1,0 +1,133 @@
+swagger: "2.0"
+info:
+  version: 0.1.0
+  title: PagoPA RT Manager
+  contact:
+    name: PagoPA spa
+    url: https://forum.italia.it/c/pagopa/
+  x-logo:
+    url: https://www.pagopa.gov.it/assets/images/pagopa-logo.png
+  description: >
+    PagoPA RT Manager API specs. Store RT sent from the partner and provide statistics about payments.
+host: api.cd.pagopa.gov.it
+basePath: "/rt-manager"
+schemes:
+  - https
+paths:
+  "/payments":
+    post:
+      operationId: registerPayment
+      summary: Register Payments
+      description: Register a RT and send an email to the user
+      responses:
+        "200":
+          description: Success
+          schema:
+            $ref: "#/definitions/SuccessResponse"
+          examples:
+            application/json:
+              result: "OK"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: "#/definitions/ErrorResponse"
+      parameters:
+        - in: body
+          name: body
+          schema:
+            "$ref": "#/definitions/RegisterPaymentNotify"
+          description: The Payment info
+definitions:
+  RegisterPaymentNotify:
+    type: object
+    properties:
+      domainId:
+        type: string
+        maxLength: 35
+        minLength: 1
+      creditorTxId:
+        type: string
+        maxLength: 35
+        minLength: 1
+      payStatus:
+        type: string
+        enum:
+          - EXECUTED
+          - PARTIAL_EXECUTED
+          - NOT_EXECUTED
+          - CANCELED
+      pspId:
+        type: string
+        maxLength: 50
+        minLength: 1
+      contextId:
+        type: string
+        maxLength: 35
+        minLength: 1
+      receipt:
+        $ref: "#/definitions/RegisterPaymentReceipt"
+      receiptXML:
+        type: string
+        minLength: 1
+    required:
+      - domainId
+      - creditorTxId
+      - payStatus
+      - pspId
+      - contextId
+  RegisterPaymentReceipt:
+    type: object
+    properties:
+      amountPaid:
+        type: integer
+      bankTxRefNum:
+        type: string
+        maxLength: 50
+        minLength: 1
+      bankExecDate:
+        type: string
+        pattern: '^[0123][0-9]\/[01][0-9]\//d{4} [012][0-9]:[012345][0-9]:[012345][0-9]$'
+      bankResultCode:
+        type: string
+        maxLength: 50
+        minLength: 1
+      bankResultMessage:
+        type: string
+        maxLength: 120
+        minLength: 1
+    required:
+      - amountPaid
+      - bankTxRefNum
+      - bankExecDate
+  SuccessResponse:
+    type: object
+    properties:
+      result:
+        type: string
+        enum:
+          - "OK"
+    required:
+      - result
+  ErrorResponse:
+    type: object
+    properties:
+      result:
+        type: string
+        enum:
+          - "KO"
+      errorReason:
+        type: string
+      errorReasonAgID:
+        type: string
+      errorMessage:
+        type: string
+    required:
+      - result
+      - errorReason
+      - errorReasonAgID
+consumes:
+  - application/json
+produces:
+  - application/json
