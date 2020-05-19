@@ -326,7 +326,7 @@ function parseSoggettoPagatore(
 export function RegisterPaymentHandler(
   blobStorageService: IBlobStorageService
 ): IRegisterPaymentHandler {
-  return async (context, __, registerPaymentNotify) => {
+  return (context, __, registerPaymentNotify) => {
     if (registerPaymentNotify.receiptXML) {
       const decodedRTXML = Buffer.from(
         registerPaymentNotify.receiptXML,
@@ -336,37 +336,52 @@ export function RegisterPaymentHandler(
         decodedRTXML,
         "text/xml"
       );
-      return await sequenceS(either)({
+      return sequenceS(either)({
         datiPagamento: parseDatiPagamento(xmlDocument),
         indirizzoBeneficiario: parseIndirizzoBeneficiario(xmlDocument),
         soggettoPagatore: parseSoggettoPagatore(xmlDocument)
-      })
-        .map<
-          Promise<IResponseSuccessJson<SuccessResponse> | IResponsePaymentError>
-        >(async _ => {
-          // TODO: Handle exceptions for saveRTToBlobStorage
-          const blobUpdateRespone = await blobStorageService.save(
-            `${_.datiPagamento.dataEsitoSingoloPagamento}-${_.datiPagamento.identificativoUnivocoVersamento}.xml`,
-            decodedRTXML
-          );
-          context.log.info(
-            `RegisterPayment|INFO|Save RT into blob storage. requestId: ${blobUpdateRespone.requestId}`
-          );
-          return ResponseSuccessJson({ result: SuccessResultEnum.OK });
-        })
-        .mapLeft(_ => {
+      }).fold<
+        Promise<IResponsePaymentError | IResponseSuccessJson<SuccessResponse>>
+      >(
+        _ => {
           context.log.error(`RegisterPayment|ERROR|Invalid RT: ${_}`);
-          return _;
-        })
-        .getOrElse(
-          Promise.resolve(
-            ResponsePaymentError("Error on register payment", "Invalid RT")
-          )
-        );
+          return Promise.resolve(
+            ResponsePaymentError("Error on RT Parsing", "Invalid RT")
+          );
+        },
+        _ =>
+          blobStorageService
+            .save(
+              `${_.datiPagamento.dataEsitoSingoloPagamento}-${_.datiPagamento.identificativoUnivocoVersamento}.xml`,
+              decodedRTXML
+            )
+            .fold<
+              IResponsePaymentError | IResponseSuccessJson<SuccessResponse>
+            >(
+              err => {
+                context.log.error(
+                  `RegisterPayment|ERROR|Error saving RT into blob storage. [${err}]`
+                );
+                return ResponsePaymentError(
+                  "Error on save payment RT",
+                  err.message
+                );
+              },
+              blobUpdateRespone => {
+                context.log.info(
+                  `RegisterPayment|INFO|Save RT into blob storage. requestId: ${blobUpdateRespone.requestId}`
+                );
+                return ResponseSuccessJson({ result: SuccessResultEnum.OK });
+              }
+            )
+            .run()
+      );
     } else {
-      return ResponsePaymentError(
-        "Error on register payment",
-        "Missing RT in request"
+      return Promise.resolve(
+        ResponsePaymentError(
+          "Error on register payment",
+          "Missing RT in request"
+        )
       );
     }
   };

@@ -42,7 +42,6 @@ export function BasicAuthMiddleware(
           )
         )
         .mapLeft(_ =>
-          // TODO: Log error
           resolve(
             left<AzureBasicAuthMiddlewareErrorResponses, IAzureBasicAuth>(
               ResponseErrorForbiddenAnonymousUser
