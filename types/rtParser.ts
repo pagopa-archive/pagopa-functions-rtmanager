@@ -27,12 +27,13 @@ export const DatiPagamento = t.exact(
 );
 export type DatiPagamento = t.TypeOf<typeof DatiPagamento>;
 
-export const IndirizzoBeneficiario = t.exact(
+export const EnteBeneficiario = t.exact(
   t.interface({
+    denomUnitOperBeneficiario: NonEmptyString,
     indirizzoBeneficiario: NonEmptyString
   })
 );
-export type IndirizzoBeneficiario = t.TypeOf<typeof IndirizzoBeneficiario>;
+export type EnteBeneficiario = t.TypeOf<typeof EnteBeneficiario>;
 
 export const SoggettoPagatore = t.exact(
   t.interface({
@@ -44,3 +45,16 @@ export const SoggettoPagatore = t.exact(
   })
 );
 export type SoggettoPagatore = t.TypeOf<typeof SoggettoPagatore>;
+
+export const Dominio = t.interface({
+  identificativoDominio: NonEmptyString
+});
+export type Dominio = t.TypeOf<typeof Dominio>;
+
+export const RTData = t.interface({
+  datiPagamento: DatiPagamento,
+  dominio: Dominio,
+  enteBeneficiario: EnteBeneficiario,
+  soggettoPagatore: SoggettoPagatore
+});
+export type RTData = t.TypeOf<typeof RTData>;

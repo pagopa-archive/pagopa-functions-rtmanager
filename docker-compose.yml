@@ -1,13 +1,12 @@
 version: "3.2"
 
 services:
-
   functions:
     image: functions-template:v2.0.0
     build:
       context: ./
       dockerfile: docker/functions/Dockerfile
-    env_file: 
+    env_file:
       - .env
     environment:
       - languageWorkers__node__arguments=--inspect=0.0.0.0:5858
@@ -51,7 +50,12 @@ services:
 
   storage:
     image: azurite
-    command: ["sh", "-c", "node bin/azurite -l /opt/azurite/folder --blobPort 10003 --queuePort 10004 --tablePort 10005"]
+    command:
+      [
+        "sh",
+        "-c",
+        "node bin/azurite -l /opt/azurite/folder --blobPort 10003 --queuePort 10004 --tablePort 10005",
+      ]
     ports:
       - "10003:10003"
       - "10004:10004"
@@ -100,6 +104,14 @@ services:
       - io-fn
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - 1025:1025
+      - 8025:8025
+    networks:
+      - io-fn
 
 networks:
   io-fn:

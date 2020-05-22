@@ -1,15 +1,18 @@
 import { Context } from "@azure/functions";
+import * as df from "durable-functions";
 import * as express from "express";
 import { Response } from "express";
 import { sequenceS } from "fp-ts/lib/Apply";
 import { Either, either, fromOption, right } from "fp-ts/lib/Either";
 import { fromNullable, Option } from "fp-ts/lib/Option";
+import { tryCatch } from "fp-ts/lib/TaskEither";
 import { ContextMiddleware } from "io-functions-commons/dist/src/utils/middlewares/context_middleware";
 import { RequiredBodyPayloadMiddleware } from "io-functions-commons/dist/src/utils/middlewares/required_body_payload";
 import {
   withRequestMiddlewares,
   wrapRequestHandler
 } from "io-functions-commons/dist/src/utils/request_middleware";
+import { readableReport } from "italia-ts-commons/lib/reporters";
 import {
   IResponse,
   IResponseErrorValidation,
@@ -25,7 +28,8 @@ import {
 } from "../generated/definitions/SuccessResponse";
 import {
   DatiPagamento,
-  IndirizzoBeneficiario,
+  Dominio,
+  EnteBeneficiario,
   SoggettoPagatore
 } from "../types/rtParser";
 import { IBlobStorageService } from "../utils/blobStorage";
@@ -251,27 +255,45 @@ function parseDatiPagamento(
     )
     .chain(_ =>
       DatiPagamento.decode(_.data).mapLeft(
-        err => new Error(err.map(_1 => _1.message).join("/"))
+        err => new Error(readableReport(err))
       )
     );
 }
 
 /**
- * Parse indirizzoBeneficiario field value from an XML Document
+ * Parse enteBeneficiario field value from an XML Document
  */
-function parseIndirizzoBeneficiario(
+function parseEnteBeneficiario(
   xmlDocument: Document
-): Either<Error, IndirizzoBeneficiario> {
-  return fromOption(new Error("Missing field 'indirizzoBeneficiario'"))(
-    getElementFromXmlDocument(
-      xmlDocument,
-      "indirizzoBeneficiario"
-    ).mapNullable(e => e.textContent?.trim())
-  ).chain(indirizzoBeneficiario =>
-    IndirizzoBeneficiario.decode({ indirizzoBeneficiario }).mapLeft(
-      err => new Error(err.map(_ => _.message).join("/"))
+): Either<Error, EnteBeneficiario> {
+  return fromOption(new Error("Missing field 'enteBeneficiario'"))(
+    getElementFromXmlDocument(xmlDocument, "enteBeneficiario")
+  )
+    .chain(enteBeneficiario =>
+      getElementTextContentEither(
+        enteBeneficiario,
+        "indirizzoBeneficiario"
+      ).map(indirizzoBeneficiario => ({
+        data: {
+          indirizzoBeneficiario
+        },
+        elements: { enteBeneficiario }
+      }))
     )
-  );
+    .chain(_ =>
+      getElementTextContentEither(
+        _.elements.enteBeneficiario,
+        "denomUnitOperBeneficiario"
+      ).map(denomUnitOperBeneficiario => ({
+        ..._.data,
+        denomUnitOperBeneficiario
+      }))
+    )
+    .chain(enteBeneficiario =>
+      EnteBeneficiario.decode(enteBeneficiario).mapLeft(
+        err => new Error(readableReport(err))
+      )
+    );
 }
 
 /**
@@ -315,8 +337,23 @@ function parseSoggettoPagatore(
     )
   ).chain(_ =>
     SoggettoPagatore.decode(_.data).mapLeft(
-      err => new Error(err.map(_1 => _1.message).join("/"))
+      err => new Error(readableReport(err))
     )
+  );
+}
+
+function parseIdentificativoDominio(
+  xmlDocument: Document
+): Either<Error, Dominio> {
+  return fromOption(new Error("Invalid dominio"))(
+    getElementFromXmlDocument(xmlDocument, "dominio").chain(dominio =>
+      getElementTextContent(
+        dominio,
+        "identificativoDominio"
+      ).map(identificativoDominio => ({ identificativoDominio }))
+    )
+  ).chain(_ =>
+    Dominio.decode(_).mapLeft(err => new Error(readableReport(err)))
   );
 }
 
@@ -338,7 +375,8 @@ export function RegisterPaymentHandler(
       );
       return sequenceS(either)({
         datiPagamento: parseDatiPagamento(xmlDocument),
-        indirizzoBeneficiario: parseIndirizzoBeneficiario(xmlDocument),
+        dominio: parseIdentificativoDominio(xmlDocument),
+        enteBeneficiario: parseEnteBeneficiario(xmlDocument),
         soggettoPagatore: parseSoggettoPagatore(xmlDocument)
       }).fold<
         Promise<IResponsePaymentError | IResponseSuccessJson<SuccessResponse>>
@@ -349,12 +387,32 @@ export function RegisterPaymentHandler(
             ResponsePaymentError("Error on RT Parsing", "Invalid RT")
           );
         },
-        _ =>
+        rtData =>
           blobStorageService
             .save(
-              `${_.datiPagamento.dataEsitoSingoloPagamento}-${_.datiPagamento.identificativoUnivocoVersamento}.xml`,
+              `${rtData.datiPagamento.dataEsitoSingoloPagamento}-${rtData.datiPagamento.identificativoUnivocoVersamento}.xml`,
               decodedRTXML
             )
+            .chain(_1 => {
+              return tryCatch(
+                async () => {
+                  await df
+                    .getClient(context)
+                    .startNew(
+                      "RegisterPaymentsOrchestrator",
+                      undefined,
+                      rtData
+                    );
+                  return _1;
+                },
+                err =>
+                  new Error(
+                    `Error calling the RegisterPaymentsOrchestrator: ${String(
+                      err
+                    )}`
+                  )
+              );
+            })
             .fold<
               IResponsePaymentError | IResponseSuccessJson<SuccessResponse>
             >(
